@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>摩托车导航 · 融合版</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="header">
+        <h1>摩托车导航 · 融合版</h1>
+        <div class="status" id="status">点击地图选择起点</div>
+    </div>
+    <div class="main">
+        <div id="map">
+            <div class="map-style-toggle">
+                <button class="map-style-btn active" id="mapStyleBtn" title="切换地图样式">
+                    <span class="icon">◐</span>
+                </button>
+                <button class="map-style-btn" id="trafficBtn" title="显示路况">
+                    <span class="icon">🚦</span>
+                </button>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-header">
+                <h2>📍 路径规划</h2>
+                
+                <!-- 搜索框 -->
+                <div class="search-panel">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="🔍 搜索地点名称或地址..." autocomplete="off">
+                        <button class="search-btn" id="searchBtn">搜索</button>
+                    </div>
+                    <div class="search-results" id="searchResults">
+                        <!-- 搜索结果显示在这里 -->
+                    </div>
+                </div>
+                
+                <div class="point-input start">
+                    <div class="marker">A</div>
+                    <input type="text" id="startInput" placeholder="起点位置" readonly>
+                    <button class="clear-btn" id="clearStartBtn" title="清除起点">×</button>
+                </div>
+                <div class="point-input end">
+                    <div class="marker">B</div>
+                    <input type="text" id="endInput" placeholder="终点位置" readonly>
+                    <button class="clear-btn" id="clearEndBtn" title="清除终点">×</button>
+                </div>
+                <div class="waypoints-container" id="waypointsContainer">
+                    <!-- 途径点动态插入这里 -->
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-add-waypoint" id="addWaypointBtn">
+                        <span class="icon">+</span>
+                        <span>添加途径点</span>
+                    </button>
+                </div>
+                <div class="mode-switch" id="modeSwitch">
+                    <button class="mode-btn active" data-mode="2">
+                        <span class="icon">🛵</span>
+                        <span>摩托车</span>
+                    </button>
+                    <button class="mode-btn" data-mode="0">
+                        <span class="icon">🚗</span>
+                        <span>驾车</span>
+                    </button>
+                    <button class="mode-btn" data-mode="3">
+                        <span class="icon">🚶</span>
+                        <span>步行</span>
+                    </button>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" id="resetBtn">重置</button>
+                    <button class="btn btn-primary" id="navBtn" disabled>开始导航</button>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-weather" id="weatherBtn" disabled>
+                        <span class="icon">🌤</span>
+                        <span>沿途天气</span>
+                    </button>
+                    <button class="btn btn-share" id="shareBtn" disabled>
+                        <span class="icon">🔗</span>
+                        <span>分享路线</span>
+                    </button>
+                </div>
+                <div class="error" id="errorMsg"></div>
+            </div>
+            <div class="route-info" id="routeInfo">
+                <div class="empty-state">
+                    <div class="icon">🗺️</div>
+                    <p>在地图上点击选择起点和终点<br>即可规划骑行路线</p>
+                </div>
+            </div>
+                        <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>正在规划路线...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 本地配置（含API Key，已被 .gitignore 忽略） -->
+    <script src="config.js"></script>
+    <script>
+    // 检查config.js是否正确加载
+    if (typeof APP_CONFIG === 'undefined' || APP_CONFIG.AMAP_WEB_KEY === 'YOUR_AMAP_WEB_API_KEY') {
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;flex-direction:column;gap:16px;color:#555"><div style="font-size:48px">⚠️</div><h2>缺少配置文件</h2><p>请复制 <code>config.template.js</code> 为 <code>config.js</code>，并填入你的高德地图 API Key。</p></div>';
+        throw new Error('config.js 未配置，请参考 config.template.js');
+    }
+
+    // 全局配置（Key 从 config.js 注入）
+    const CONFIG = {
+        API_KEY: {
+            WEB: APP_CONFIG.AMAP_WEB_KEY,
+            WS:  APP_CONFIG.AMAP_WS_KEY
+        },
+        MAP: {
+            CENTER: [116.397428, 39.90923],
+            ZOOM: 13,
+            STYLE: 'amap://styles/whitesmoke'
+        },
+        MODE: {
+            BICYCLING: 2,
+            DRIVING: 0,
+            WALKING: 3
+        },
+        ROUTE_COLORS: {
+            bicycling: { main: '#4CAF50', shadow: '#2E7D32' },
+            driving:   { main: '#2196F3', shadow: '#1565C0' },
+            walking:   { main: '#9C27B0', shadow: '#7B1FA2' }
+        },
+        MARKER_COLORS: {
+            start:    { bg: '#4CAF50', border: '#2E7D32' },
+            end:      { bg: '#f44336', border: '#C62828' },
+            waypoint: { bg: '#FF9800', border: '#F57C00' }
+        },
+        API: {
+            BICYCLING: 'https://restapi.amap.com/v4/direction/bicycling',
+            DRIVING:   'https://restapi.amap.com/v3/direction/driving',
+            WALKING:   'https://restapi.amap.com/v3/direction/walking',
+            REGEO:     'https://restapi.amap.com/v3/geocode/regeo',
+            SEARCH:    'https://restapi.amap.com/v3/place/text'
+        }
+    };
+
+    /**
+     * 动态加载高德地图 JS API，加载完成后再启动业务模块
+     * Key 从 config.js 读取，不硬编码在此文件中
+     */
+    function loadAmapAndInit() {
+        const script = document.createElement('script');
+        script.src = 'https://webapi.amap.com/maps?v=2.0&key=' + APP_CONFIG.AMAP_WEB_KEY;
+        script.onload = function() {
+            // 高德 API 就绪后，串行加载业务脚本（保持依赖顺序）
+            const modules = ['js/utils.js', 'js/map.js', 'js/marker.js', 'js/route.js', 'js/weather.js', 'js/share.js', 'js/ui.js'];
+            function loadNext(index) {
+                if (index >= modules.length) {
+                    // 所有模块加载完毕，初始化应用
+                    MapManager.init();
+                    UI.init();
+                    return;
+                }
+                const s = document.createElement('script');
+                s.src = modules[index];
+                s.onload = function() { loadNext(index + 1); };
+                s.onerror = function() { console.error('加载模块失败:', modules[index]); };
+                document.body.appendChild(s);
+            }
+            loadNext(0);
+        };
+        script.onerror = function() {
+            console.error('高德地图 API 加载失败，请检查 AMAP_WEB_KEY 是否正确');
+        };
+        document.head.appendChild(script);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', loadAmapAndInit);
+    } else {
+        loadAmapAndInit();
+    }
+    </script>
+
+    <!-- 分享弹窗 -->
+    <div id="shareModal" class="modal-overlay" onclick="if(event.target===this)ShareManager.hideShareModal()">
+        <div class="modal-content share-modal">
+            <div class="modal-header">
+                <h3>🔗 分享与导出</h3>
+                <button class="modal-close" onclick="ShareManager.hideShareModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="share-section">
+                    <h4>🔗 分享链接</h4>
+                    <div class="share-link-box">
+                        <input type="text" id="shareLinkInput" readonly placeholder="点击下方按钮生成分享链接">
+                        <button class="btn btn-copy-link" id="copyLinkBtn" onclick="ShareManager.copyShareLink()">复制链接</button>
+                    </div>
+                    <div class="share-qr-wrap">
+                        <div id="qrcodeContainer" class="qrcode-container"></div>
+                        <p class="share-qr-hint">用微信/QQ扫描二维码<br>快速打开此路线</p>
+                    </div>
+                </div>
+                <div class="share-divider"></div>
+                <div class="share-section">
+                    <h4>💾 路线文件</h4>
+                    <div class="export-import-btns">
+                        <button class="btn btn-export-modal" id="exportBtnModal" disabled onclick="UI.exportRoute()">
+                            <span class="icon">📤</span>
+                            <span>导出路线</span>
+                        </button>
+                        <button class="btn btn-import-modal" id="importBtnModal" onclick="document.getElementById('importFileModal').click()">
+                            <span class="icon">📥</span>
+                            <span>导入路线</span>
+                        </button>
+                        <input type="file" id="importFileModal" accept=".json" style="display: none;" onchange="UI.importRoute(this)">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 天气加载提示 -->
+    <div id="weatherToast" class="toast" style="display:none;">
+        <div class="spinner" style="width:20px;height:20px;border-width:2px;margin-bottom:6px;"></div>
+        <span>正在查询天气...</span>
+    </div>
+
+</body>
+</html>
